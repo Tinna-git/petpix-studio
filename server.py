@@ -10,12 +10,11 @@ import uuid
 import time
 import random
 import base64
-import hashlib
+import mimetypes
 import urllib.request
 import urllib.parse
-import mimetypes
 from pathlib import Path
-from http.server import HTTPServer, BaseHTTPRequestHandler
+from http.server import HTTPServer, BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.error import HTTPError, URLError
 
 # 确保工作目录正确
@@ -49,11 +48,9 @@ SILICONFLOW_API_URL = "https://api.siliconflow.cn/v1/images/generations"
 SILICONFLOW_API_KEY = os.getenv("SILICONFLOW_API_KEY", "")
 SILICONFLOW_MODEL = "Kwai-Kolors/Kolors"
 
-# AutoGLM upload config
-AUTOGLM_UPLOAD_URL = "https://autoglm-api.zhipuai.cn/agentdr/v1/assistant/upload-mix"
-AUTOGLM_APP_ID = "100003"
-AUTOGLM_APP_KEY = "38d2391985e2369a5fb8227d8e6cd5e5"
-AUTOGLM_TOKEN_URL = "http://127.0.0.1:18432/get_token"
+# ── 公网 URL 配置（Railway 部署时自动获取） ──
+PUBLIC_BASE_URL = os.getenv("PUBLIC_BASE_URL", "")  # 手动设置，如 https://xxx.up.railway.app
+RAILWAY_PUBLIC_DOMAIN = os.getenv("RAILWAY_PUBLIC_DOMAIN", "")  # Railway 自动注入
 
 STYLES = {
     "guardian": {
@@ -157,42 +154,27 @@ def _get_mock_images():
     return [f.name for f in OUTPUT_DIR.iterdir() if f.suffix.lower() in valid_ext]
 
 
-def _upload_to_autoglm(image_bytes: bytes, filename: str) -> str:
-    """上传图片到 AutoGLM，返回公网 URL"""
-    try:
-        with urllib.request.urlopen(AUTOGLM_TOKEN_URL, timeout=5) as resp:
-            token = resp.read().decode().strip()
-        if not token.lower().startswith("bearer "):
-            token = f"Bearer {token}"
-    except Exception:
-        b64 = base64.b64encode(image_bytes).decode()
-        return f"data:image/jpeg;base64,{b64}"
+def _get_public_image_url(image_bytes: bytes, filename: str) -> str:
+    """
+    获取图片的公网可访问 URL。
+    策略：保存到 uploads/ 目录 → 通过服务器自身公网地址提供访问。
+    Railway 部署时使用 RAILWAY_PUBLIC_DOMAIN，本地开发使用 base64。
+    """
+    # 保存到 uploads 目录
+    filepath = UPLOAD_DIR / filename
+    filepath.write_bytes(image_bytes)
 
-    timestamp = str(int(time.time()))
-    sign = hashlib.md5(f"{AUTOGLM_APP_ID}&{timestamp}&{AUTOGLM_APP_KEY}".encode()).hexdigest()
+    # 构建公网 URL
+    base = PUBLIC_BASE_URL or RAILWAY_PUBLIC_DOMAIN
+    if base:
+        if not base.startswith("http"):
+            base = f"https://{base}"
+        url = f"{base.rstrip('/')}/uploads/{filename}"
+        print(f"[Upload] 公网 URL: {url}")
+        return url
 
-    boundary = f"----FormBoundary{uuid.uuid4().hex[:16]}"
-    body = b""
-    body += f"--{boundary}\r\n".encode()
-    body += f'Content-Disposition: form-data; name="files"; filename="{filename}"\r\n'.encode()
-    body += b"Content-Type: image/jpeg\r\n\r\n"
-    body += image_bytes + b"\r\n"
-    body += f"--{boundary}--\r\n".encode()
-
-    req = urllib.request.Request(AUTOGLM_UPLOAD_URL, data=body, headers={
-        "Authorization": token,
-        "Content-Type": f"multipart/form-data; boundary={boundary}",
-        "X-Auth-Appid": AUTOGLM_APP_ID,
-        "X-Auth-TimeStamp": timestamp,
-        "X-Auth-Sign": sign,
-    })
-
-    with urllib.request.urlopen(req, timeout=30) as resp:
-        result = json.loads(resp.read())
-
-    oss_list = result.get("data", {}).get("oss_info", [])
-    if oss_list:
-        return oss_list[0]["oss_url"]
+    # 本地开发 fallback: base64 data URI
+    print("[Upload] 无公网域名，使用 base64 data URI（仅本地 mock 可用）")
     b64 = base64.b64encode(image_bytes).decode()
     return f"data:image/jpeg;base64,{b64}"
 
@@ -206,7 +188,7 @@ def _dashscope_generate(image_bytes: bytes, style_id: str, with_owner: bool = Fa
     prompt = style.get("prompt_portrait", style["prompt"]) if with_owner else style["prompt"]
 
     # 上传图片获取公网 URL
-    image_url = _upload_to_autoglm(image_bytes, "pet.jpg")
+    image_url = _get_public_image_url(image_bytes, "pet.jpg")
 
     payload = json.dumps({
         "model": DASHSCOPE_MODEL,
@@ -257,7 +239,7 @@ def _siliconflow_generate(image_bytes: bytes, style_id: str, with_owner: bool = 
 
     prompt = style.get("prompt_portrait", style["prompt"]) if with_owner else style["prompt"]
 
-    image_url = _upload_to_autoglm(image_bytes, "pet.jpg")
+    image_url = _get_public_image_url(image_bytes, "pet.jpg")
 
     payload = json.dumps({
         "model": SILICONFLOW_MODEL,
@@ -384,6 +366,9 @@ class PetPixHandler(BaseHTTPRequestHandler):
         elif path.startswith("/api/order/"):
             order_id = path.split("/")[-1]
             self._send_json(get_order(order_id))
+        elif path.startswith("/uploads/"):
+            filename = path.split("/")[-1]
+            self._send_file(UPLOAD_DIR / filename)
         elif path.startswith("/outputs/"):
             filename = path.split("/")[-1]
             self._send_file(OUTPUT_DIR / filename)
@@ -483,7 +468,9 @@ class PetPixHandler(BaseHTTPRequestHandler):
 
 
 if __name__ == "__main__":
-    print(f"PetPix Studio v1.1 running at http://localhost:{PORT}")
+    print(f"PetPix Studio v1.2 running at http://localhost:{PORT}")
+    print(f"Public URL: {PUBLIC_BASE_URL or RAILWAY_PUBLIC_DOMAIN or '(local only)'}")
     print(f"Mock images: {len(_get_mock_images())} found in outputs/")
     print(f"Orders: in-memory (reset on restart)")
-    HTTPServer(("0.0.0.0", PORT), PetPixHandler).serve_forever()
+    server = ThreadingHTTPServer(("0.0.0.0", PORT), PetPixHandler)
+    server.serve_forever()

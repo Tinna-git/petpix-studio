@@ -1,5 +1,2 @@
-fastapi>=0.104.0
-uvicorn>=0.24.0
-python-multipart>=0.0.6
-httpx>=0.25.0
-python-dotenv>=1.0.0
+# PetPix Studio 纯标准库，无需额外依赖
+# Railway Nixpacks 需要 requirements.txt 存在，但内容为空即可
