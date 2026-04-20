@@ -141,6 +141,9 @@ STYLES = {
     },
 }
 
+# 导入 pipeline（两步流水线：特征提取 + 风格化生成）
+from pipeline import extract_pet_features, generate_with_features
+
 # 导入 mock 订单系统
 from mock_order import (
     create_order, pay_order, get_order, list_orders,
@@ -221,70 +224,50 @@ def _dashscope_generate(image_bytes: bytes, style_id: str, with_owner: bool = Fa
     if not generated_url:
         raise ValueError("DashScope API 返回图片 URL 为空")
 
-    # 下载到本地
-    with urllib.request.urlopen(generated_url, timeout=60) as img_resp:
-        img_data = img_resp.read()
-
-    filename = f"{uuid.uuid4().hex[:12]}_{int(time.time())}.png"
-    filepath = OUTPUT_DIR / filename
-    filepath.write_bytes(img_data)
-    return {"filename": filename, "serve_url": f"/outputs/{filename}", "mock": False}
+    return {"image_url": generated_url, "filename": f"{uuid.uuid4().hex[:12]}_{int(time.time())}.png", "mock": False}
 
 
-def _siliconflow_generate(image_bytes: bytes, style_id: str, with_owner: bool = False) -> dict:
-    """调用硅基流动图生图 API（fallback）"""
+def _pipeline_generate(image_bytes: bytes, style_id: str, with_owner: bool = False) -> dict:
+    """新流水线：Step 1 特征提取 + Step 2 风格化生成"""
+    import tempfile
     style = STYLES.get(style_id)
     if not style:
         raise ValueError(f"未知风格: {style_id}")
 
-    prompt = style.get("prompt_portrait", style["prompt"]) if with_owner else style["prompt"]
+    # 先保存上传图片到临时文件，pipeline 需要文件路径
+    tmp = tempfile.NamedTemporaryFile(suffix=".jpg", delete=False, dir=str(UPLOAD_DIR))
+    tmp.write(image_bytes)
+    tmp.close()
 
-    image_url = _get_public_image_url(image_bytes, "pet.jpg")
-
-    payload = json.dumps({
-        "model": SILICONFLOW_MODEL,
-        "prompt": style["prompt"],
-        "image_url": image_url,
-        "image_size": "1024x1024",
-        "n_prompt": style["n_prompt"],
-        "strength": style["strength"],
-        "num_inference_steps": style["num_inference_steps"],
-    }).encode()
-
-    req = urllib.request.Request(SILICONFLOW_API_URL, data=payload, headers={
-        "Authorization": f"Bearer {SILICONFLOW_API_KEY}",
-        "Content-Type": "application/json",
-    })
-
-    with urllib.request.urlopen(req, timeout=120) as resp:
-        result = json.loads(resp.read())
-
-    images = result.get("images", [])
-    if not images:
-        raise ValueError("API 未返回生成图片")
-
-    generated_url = images[0]["url"]
-    with urllib.request.urlopen(generated_url, timeout=60) as img_resp:
-        img_data = img_resp.read()
-
-    filename = f"{uuid.uuid4().hex[:12]}_{int(time.time())}.png"
-    filepath = OUTPUT_DIR / filename
-    filepath.write_bytes(img_data)
-    return {"filename": filename, "serve_url": f"/outputs/{filename}", "mock": False}
+    try:
+        features = extract_pet_features(tmp.name)
+        # 从 styles.py 导入的 STYLES 或 server 内置的 STYLES 都有相同字段
+        result = generate_with_features(tmp.name, features, style)
+        # 优先用 API 返回的远程 URL（Railway 兼容），本地 fallback
+        image_url = result.get("remote_url", "")
+        if image_url:
+            return {"image_url": image_url, "filename": result["filename"], "mock": False}
+        else:
+            return {"filename": result["filename"], "serve_url": f"/outputs/{result['filename']}", "mock": False}
+    finally:
+        try:
+            os.unlink(tmp.name)
+        except OSError:
+            pass
 
 
 def generate_pet_art(image_bytes: bytes, style_id: str, with_owner: bool = False) -> dict:
-    """生成宠物艺术照：SiliconFlow 优先 → DashScope → mock"""
-    # 1. 尝试 SiliconFlow (Kolors 图生图)
-    if SILICONFLOW_API_KEY:
+    """生成宠物艺术照：Pipeline 优先 → DashScope fallback → mock"""
+    # 1. Pipeline（需要 SILICONFLOW_KEY 和 DASHSCOPE_KEY）
+    if SILICONFLOW_API_KEY and DASHSCOPE_API_KEY:
         try:
-            result = _siliconflow_generate(image_bytes, style_id, with_owner=with_owner)
-            print(f"[SiliconFlow] 生成成功: {result['filename']}")
+            result = _pipeline_generate(image_bytes, style_id, with_owner=with_owner)
+            print(f"[Pipeline] 生成成功: {result['filename']}")
             return result
         except Exception as e:
-            print(f"[SiliconFlow] 调用失败: {e}")
+            print(f"[Pipeline] 调用失败: {e}")
 
-    # 2. Fallback 到 DashScope
+    # 2. Fallback 到 DashScope 单步
     if DASHSCOPE_API_KEY:
         try:
             result = _dashscope_generate(image_bytes, style_id, with_owner=with_owner)

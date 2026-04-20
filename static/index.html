@@ -682,7 +682,7 @@ body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Hira
     bar.style.animation='none';bar.offsetHeight;bar.style.animation='progressFill 30s ease forwards';
     fetch('/api/generate',{method:'POST',body:fd}).then(r=>r.json()).then(d=>{
       if(d.error){showToast('生成失败：'+d.error,'❌');goTo(2);return}
-      generatedImg=d.serve_url;
+      generatedImg=d.image_url||d.serve_url;
       setTimeout(()=>{
         goTo(4);
         document.getElementById('previewImg').src=generatedImg;
