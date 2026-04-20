@@ -355,6 +355,10 @@ class PetPixHandler(BaseHTTPRequestHandler):
         elif path.startswith("/outputs/"):
             filename = path.split("/")[-1]
             self._send_file(OUTPUT_DIR / filename)
+        elif path.startswith("/static/"):
+            # serve files from static/ subdirectory (e.g. /static/previews/xxx.jpg)
+            rel = path[len("/static/"):]
+            self._send_file(STATIC_DIR / rel)
         elif path == "/":
             self._send_file(STATIC_DIR / "index.html", "text/html; charset=utf-8")
         else:

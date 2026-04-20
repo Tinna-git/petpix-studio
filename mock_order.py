@@ -6,10 +6,10 @@ import uuid
 from datetime import datetime
 
 PRICING = [
-    {"id": "trial",     "name": "体验版",     "desc": "3张精修带水印",           "price": 9.9},
-    {"id": "portrait",  "name": "写真套系",   "desc": "10张精修3风格",          "price": 29},
-    {"id": "guardian",  "name": "守护神套系", "desc": "5张守护神+3张合影",      "price": 49},
-    {"id": "premium",   "name": "全能礼包",   "desc": "写真10+守护神5+合影3",   "price": 79},
+    {"id": "trial",     "name": "体验版",     "desc": "3张精修带水印",           "price": 9.9,  "original": 19.9},
+    {"id": "portrait",  "name": "写真套系",   "desc": "10张精修3风格",          "price": 29,   "original": 59},
+    {"id": "guardian",  "name": "守护神套系", "desc": "5张守护神+3张合影",      "price": 49,   "original": 99},
+    {"id": "premium",   "name": "全能礼包",   "desc": "写真10+守护神5+合影3",   "price": 79,   "original": 159},
 ]
 
 PRICE_MAP = {p["id"]: p for p in PRICING}
