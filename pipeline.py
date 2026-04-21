@@ -125,15 +125,28 @@ def extract_pet_features(image_path: str) -> dict:
         features = json.loads(content)
     except json.JSONDecodeError as e:
         print(f"  [Step 1] JSON 解析失败: {e}")
-        # 尝试提取 detailed_description 字段
-        import re
-        m = re.search(r'"detailed_description"\s*:\s*"([^"]+)"', content)
-        if m:
-            features = {"detailed_description": m.group(1)}
-            print(f"  [Step 1] 提取到 detailed_description")
-        else:
-            print(f"  [Step 1] 原始输出: {content[:300]}")
-            features = {"detailed_description": content}
+        # 清理控制字符后重试
+        try:
+            cleaned = content.encode("utf-8", errors="ignore").decode("unicode_escape", errors="ignore")
+            cleaned = cleaned.replace("\n", " ").replace("\r", " ").replace("\t", " ")
+            # 重新提取 JSON 对象
+            import re
+            m = re.search(r'\{[^{}]*"detailed_description"[^{}]*\}', cleaned)
+            if m:
+                cleaned = m.group(0)
+            cleaned = cleaned.replace(", }", "}").replace(",}", "}")
+            features = json.loads(cleaned)
+            print(f"  [Step 1] 清理后解析成功")
+        except Exception as e2:
+            print(f"  [Step 1] 清理后仍失败: {e2}")
+            import re
+            m = re.search(r'"detailed_description"\s*:\s*"([^"]+)"', content)
+            if m:
+                features = {"detailed_description": m.group(1)}
+                print(f"  [Step 1] 提取到 detailed_description")
+            else:
+                print(f"  [Step 1] 原始输出: {content[:300]}")
+                features = {"detailed_description": content}
     
     return features
 

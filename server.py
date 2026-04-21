@@ -146,8 +146,9 @@ from pipeline import extract_pet_features, generate_with_features
 
 # 导入 mock 订单系统
 from mock_order import (
-    create_order, pay_order, get_order, list_orders,
-    create_share_link, PRICING
+    init_db, create_order, pay_order, get_order, list_orders,
+    create_share_link, update_order_style_name, save_generation,
+    get_stats, PRICING, DB_PATH
 )
 
 
@@ -243,12 +244,21 @@ def _pipeline_generate(image_bytes: bytes, style_id: str, with_owner: bool = Fal
         features = extract_pet_features(tmp.name)
         # 从 styles.py 导入的 STYLES 或 server 内置的 STYLES 都有相同字段
         result = generate_with_features(tmp.name, features, style)
-        # 优先用 API 返回的远程 URL（Railway 兼容），本地 fallback
-        image_url = result.get("remote_url", "")
-        if image_url:
-            return {"image_url": image_url, "filename": result["filename"], "mock": False}
+        # 部署环境优先用远程 URL（SiliconFlow CDN），本地开发优先用本地路径
+        remote_url = result.get("remote_url", "")
+        local_path = result.get("local_path", "")
+        if PUBLIC_BASE_URL or RAILWAY_PUBLIC_DOMAIN:
+            # 部署环境：用远程 URL，同时下载到本地备用
+            if remote_url:
+                return {"image_url": remote_url, "filename": result["filename"], "mock": False}
+            elif local_path and os.path.exists(local_path):
+                return {"serve_url": f"/outputs/{result['filename']}", "filename": result["filename"], "mock": False}
         else:
-            return {"filename": result["filename"], "serve_url": f"/outputs/{result['filename']}", "mock": False}
+            # 本地开发：优先本地路径
+            if local_path and os.path.exists(local_path):
+                return {"serve_url": f"/outputs/{result['filename']}", "filename": result["filename"], "mock": False}
+            elif remote_url:
+                return {"image_url": remote_url, "filename": result["filename"], "mock": False}
     finally:
         try:
             os.unlink(tmp.name)
@@ -332,7 +342,8 @@ class PetPixHandler(BaseHTTPRequestHandler):
         path = urllib.parse.urlparse(self.path).path
 
         if path == "/api/health":
-            self._send_json({"status": "ok", "version": "1.1.0", "mode": "mock+api"})
+            stats = get_stats()
+            self._send_json({"status": "ok", "version": "1.3.0", "mode": "pipeline+api", "stats": stats})
         elif path == "/api/styles":
             self._send_json({"styles": [
                 {
@@ -417,6 +428,13 @@ class PetPixHandler(BaseHTTPRequestHandler):
 
         try:
             result = generate_pet_art(image_bytes, style_id, with_owner=with_owner)
+            # 保存生成记录到数据库
+            save_generation(
+                style_id=style_id,
+                filename=result.get("filename", ""),
+                image_url=result.get("image_url", result.get("serve_url", "")),
+                mock=result.get("mock", False),
+            )
             self._send_json({"style": style_id, "portrait": with_owner, **result})
         except Exception as e:
             self._send_json({"error": str(e)}, 500)
@@ -425,7 +443,11 @@ class PetPixHandler(BaseHTTPRequestHandler):
         data = self._read_json_body()
         package_id = data.get("package_id", "")
         style_id = data.get("style_id", "")
-        result = create_order(package_id, style_id)
+        image_url = data.get("image_url", "")
+        result = create_order(package_id, style_id, image_url=image_url)
+        # 注入 style_name
+        if style_id in STYLES and "error" not in result:
+            update_order_style_name(result["order_id"], STYLES[style_id]["name"])
         if "error" in result:
             self._send_json(result, 400)
         else:
@@ -455,9 +477,13 @@ class PetPixHandler(BaseHTTPRequestHandler):
 
 
 if __name__ == "__main__":
-    print(f"PetPix Studio v1.2 running at http://localhost:{PORT}")
+    init_db()
+    stats = get_stats()
+    print(f"PetPix Studio v1.3 running at http://localhost:{PORT}")
     print(f"Public URL: {PUBLIC_BASE_URL or RAILWAY_PUBLIC_DOMAIN or '(local only)'}")
     print(f"Mock images: {len(_get_mock_images())} found in outputs/")
-    print(f"Orders: in-memory (reset on restart)")
+    print(f"Orders: {stats['total_orders']} total, {stats['paid_orders']} paid, ¥{stats['total_revenue']} revenue")
+    print(f"Generations: {stats['total_generations']} total ({stats['real_generations']} real)")
+    print(f"Database: {DB_PATH}")
     server = ThreadingHTTPServer(("0.0.0.0", PORT), PetPixHandler)
     server.serve_forever()

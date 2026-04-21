@@ -7,3 +7,6 @@ uploads/
 *.jpg
 *.jpeg
 test_*.py
+petpix.db
+petpix.db-wal
+petpix.db-shm
