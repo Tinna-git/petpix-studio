@@ -267,9 +267,9 @@ def _pipeline_generate(image_bytes: bytes, style_id: str, with_owner: bool = Fal
 
 
 def generate_pet_art(image_bytes: bytes, style_id: str, with_owner: bool = False) -> dict:
-    """生成宠物艺术照：Pipeline 优先 → DashScope fallback → mock"""
-    # 1. Pipeline（需要 SILICONFLOW_KEY 和 DASHSCOPE_KEY）
-    if SILICONFLOW_API_KEY and DASHSCOPE_API_KEY:
+    """生成宠物艺术照：Pipeline（仅需 SiliconFlow）→ mock"""
+    # 1. Pipeline（只需要 SILICONFLOW_KEY）
+    if SILICONFLOW_API_KEY:
         try:
             result = _pipeline_generate(image_bytes, style_id, with_owner=with_owner)
             print(f"[Pipeline] 生成成功: {result['filename']}")
@@ -277,17 +277,8 @@ def generate_pet_art(image_bytes: bytes, style_id: str, with_owner: bool = False
         except Exception as e:
             print(f"[Pipeline] 调用失败: {e}")
 
-    # 2. Fallback 到 DashScope 单步
-    if DASHSCOPE_API_KEY:
-        try:
-            result = _dashscope_generate(image_bytes, style_id, with_owner=with_owner)
-            print(f"[DashScope] 生成成功: {result['filename']}")
-            return result
-        except Exception as e:
-            print(f"[DashScope] 调用失败: {e}")
-
-    # 3. 最终 fallback: mock
-    print("[Mock] 所有 API 失败，使用 mock 模式")
+    # 2. 最终 fallback: mock
+    print("[Mock] Pipeline 失败，使用 mock 模式")
     return _mock_generate(style_id)
 
 

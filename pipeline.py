@@ -43,21 +43,20 @@ DASHSCOPE_KEY = env.get("DASHSCOPE_API_KEY", "")
 
 def extract_pet_features(image_path: str) -> dict:
     """
-    用 DashScope Qwen-VL 视觉模型分析宠物照片，提取详细特征。
+    用 SiliconFlow 视觉模型分析宠物照片，提取详细特征。
     """
     with open(image_path, "rb") as f:
         img_data = f.read()
     b64 = base64.b64encode(img_data).decode()
 
-    url = "https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions"
+    url = "https://api.siliconflow.cn/v1/chat/completions"
     headers = {
-        "Authorization": f"Bearer {DASHSCOPE_KEY}",
+        "Authorization": f"Bearer {SILICONFLOW_KEY}",
         "Content-Type": "application/json",
     }
 
-    # 使用 Qwen2.5-VL 视觉模型
     payload = {
-        "model": "qwen2.5-vl-7b-instruct",
+        "model": "Pro/Qwen/Qwen2.5-VL-7B-Instruct",
         "messages": [
             {
                 "role": "system",
